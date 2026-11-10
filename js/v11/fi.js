@@ -1,7 +1,7 @@
 // Portal Lab v11 · Ohio State Football Intelligence (historical replay).
 // Integrity rule: before REVEAL only data/fi_hist.json (2024-25 seasons, portal records, January 2026 reporting) is loaded.
 // data/fi_out.json (2026 results through Nov. 10, 2026) is fetched only when the user presses REVEAL 2026 RESULTS.
-import { POS, OUTCOME, LVF, score, spearman, spearmanCI } from "./engine.js";
+import { POS, OUTCOME, LVF, GAP_REL, score, spearman, spearmanCI } from "./engine.js";
 import { SRC, NOTES, PURSUIT } from "./facts.js";
 
 export const V11NAV = [
@@ -135,12 +135,13 @@ const askBtn = (q) => `<button class="fi-chip" data-fiask="${esc(q)}">${esc(q)}<
 // ---------------- Screen 1: transfer class ----------------
 function completeness(c) {
   const o = F.O?.cls[nm(c.name)];
-  const items = [["Prior school", !!c.origin], ["Transfer timing", !!c.portal?.date || !!(NOTES[c.name] || []).length], ["Eligibility", !!c.portal?.elig], ["Portal rating", c.portal?.rating != null], ["2024–25 production", !!Object.keys(c.seasons || {}).length], ["Verified notes", !!(NOTES[c.name] || []).length], ["Staff role definition", false], ["Snap counts", false]];
+  const items = [["Prior school", !!c.origin], ["Most recent season (2025) played", !!c.seasons?.["2025"]], ["Transfer timing", !!c.portal?.date || !!(NOTES[c.name] || []).length], ["Eligibility", !!c.portal?.elig], ["Portal rating", c.portal?.rating != null], ["2024–25 production", !!Object.keys(c.seasons || {}).length], ["Verified notes", !!(NOTES[c.name] || []).length], ["Staff role definition", false], ["Snap counts", false]];
   if (F.reveal) items.push(["2026 production", !!o?.s2026]);
   return { items, v: items.filter((x) => x[1]).length / items.length };
 }
 function confidence(c) {
   const s = Object.values(c.seasons || {}); const vol = s.reduce((a, x) => a + (x.att || 0) + (x.tot || 0) * 4 + (x.rec || 0) * 6 + (x.car || 0) + (x.fga || 0) * 10 + (x.punts || 0) * 3, 0);
+  if (Object.keys(c.seasons || {}).length && !c.seasons["2025"]) return vol >= 60 ? ["Low", "No 2025 season on record. Older production may not carry forward (injury, role change), so the range is wider"] : ["Very low", "No 2025 season and little earlier production"];
   return vol >= 300 ? ["Medium", "Two seasons of public production; still no snap counts or charting"] : vol >= 60 ? ["Low", "Limited public production"] : ["Very low", "Little or no public production in 2024–25"];
 }
 function opportunity(c) {
@@ -178,7 +179,7 @@ function profileHTML(name) {
   if (mod) {
     const S = scored(mod); const me = S.rows.find((r) => nm(r.h.name) === nm(c.name));
     const alts = S.rows.filter((r) => !isSignee(r.h.name) && feas(mod, r.h).real).slice(0, 3);
-    fit = me ? `<p>${MODEL} Ranked <b>${me.rank}</b> of ${S.rows.length} screened ${POS[mod].short} transfers (80% range ${me.lo}–${me.hi}). Largest drivers: ${me.contrib.map((v, j) => [v, POS[mod].metrics[j].label]).sort((a, b) => Math.abs(b[0]) - Math.abs(a[0])).slice(0, 2).map(([v, l]) => `${esc(l)} (${v >= 0 ? "+" : ""}${v.toFixed(2)})`).join(", ")}.${me.miss.length ? ` Missing: ${esc(me.miss.join(", "))}.` : ""}</p>${me && noRecent(mod, me.h) ? `<p class="fi-warn">No 2025 season on record. The ranking uses older production and does not adjust for why the player missed time.</p>` : ""}${POS[mod].caution ? `<p class="fi-warn">${esc(POS[mod].caution)}</p>` : ""}` : `<p>${NA} Not enough public production to rank.</p>`;
+    fit = me ? `<p>${MODEL} Ranked <b>${me.rank}</b> of ${S.rows.length} screened ${POS[mod].short} transfers (80% range ${me.lo}–${me.hi}). Largest drivers: ${me.contrib.map((v, j) => [v, POS[mod].metrics[j].label]).sort((a, b) => Math.abs(b[0]) - Math.abs(a[0])).slice(0, 2).map(([v, l]) => `${esc(l)} (${v >= 0 ? "+" : ""}${v.toFixed(2)})`).join(", ")}.${me.miss.length ? ` Missing: ${esc(me.miss.join(", "))}.` : ""}</p>${me && noRecent(mod, me.h) ? `<p class="fi-warn">No 2025 season on record. His production metrics count at ${Math.round(GAP_REL * 100)}% reliability, so his rank is pulled toward average and his 80% range is wider. The model does not know why he missed the season (for example, injury), so staff medical and film review still decide whether he returns to that level.</p>` : ""}${POS[mod].caution ? `<p class="fi-warn">${esc(POS[mod].caution)}</p>` : ""}` : `<p>${NA} Not enough public production to rank.</p>`;
     alt = alts.length ? `<ul>${alts.map((r) => `<li>${esc(r.h.name)} (${esc(r.h.origin)}) · rank ${r.rank} · ${esc(feas(mod, r.h).t)}</li>`).join("")}</ul>` : "<p>None with feasibility evidence.</p>";
   }
   const seas = Object.entries(c.seasons || {}).map(([y, s]) => `<li><b>${y}</b> ${esc(s.team)} (${esc(s.lv)}, ${s.teamGames || "?"} team games): ${esc(prodLine(s, c.pos))}</li>`).join("") || "<li>No 2024–25 stats in CFBD</li>";
@@ -215,7 +216,7 @@ function rankTable(pos, S, list) {
   const M = POS[pos].metrics.slice(0, 3);
   const head = ["Rank", "Player", "From", ...M.map((m) => esc(m.label)), "Score", "80% rank range", "Data complete", "Feasibility", ...(F.reveal ? ["2026 school", "2026 opportunity · outcome"] : [])];
   const rows = list.map((r) => { const fe = feas(pos, r.h); const tm = timing(pos, r.h); const sel = (F.cmp[pos] || []).includes(r.h.name);
-    return `<tr class="${isSignee(r.h.name) ? "fi-osu" : ""} ${sel ? "fi-sel" : ""}" data-ficmp="${pos}:${esc(r.h.name)}" tabindex="0"><td>${r.rank}</td><td><b>${esc(r.h.name)}</b>${isSignee(r.h.name) ? " " + tag("OSU", "osu") : ""}${noRecent(pos, r.h) ? `<div>${tag("NO 2025 SEASON", "na")}</div>` : ""}</td><td>${esc(r.h.origin)} <span class="fi-sub">${esc(r.h.olv || "")}</span></td>${M.map((m, j) => { const ix = POS[pos].metrics.indexOf(m); return `<td>${r.v[ix] == null ? "—" : f(r.v[ix], m.k === "exp" || m.k === "time" ? 1 : m.k === "ready" ? 0 : 3)}</td>`; }).join("")}<td><b>${f(r.score, 2)}</b></td><td>${r.lo}–${r.hi}</td><td>${pct(r.completeness)}</td><td class="fi-fcol"><span class="fi-fe ${fe.c}">${esc(fe.t)}</span>${tm ? `<div><span class="fi-tag na" title="${esc(tm)}">DATED BEFORE ${esc(DEC[pos].slice(5).replace("-", "/"))}</span></div>` : ""}</td>${outCell(pos, r.h.name)}</tr>`; });
+    return `<tr class="${isSignee(r.h.name) ? "fi-osu" : ""} ${sel ? "fi-sel" : ""}" data-ficmp="${pos}:${esc(r.h.name)}" tabindex="0"><td>${r.rank}</td><td><b>${esc(r.h.name)}</b>${isSignee(r.h.name) ? " " + tag("OSU", "osu") : ""}${r.gap ? `<div><span class="fi-tag na" title="No 2025 season on record. Production metrics count at ${Math.round(GAP_REL * 100)}% reliability, so the score is pulled toward average and the 80% rank range is wider.">NO 2025 SEASON · WIDER RANGE</span></div>` : ""}</td><td>${esc(r.h.origin)}${jumpTag(r.h)}</td>${M.map((m, j) => { const ix = POS[pos].metrics.indexOf(m); return `<td>${r.v[ix] == null ? "—" : f(r.v[ix], m.k === "exp" || m.k === "time" ? 1 : m.k === "ready" ? 0 : 3)}</td>`; }).join("")}<td><b>${f(r.score, 2)}</b></td><td>${r.lo}–${r.hi}</td><td>${pct(r.completeness)}</td><td class="fi-fcol"><span class="fi-fe ${fe.c}">${esc(fe.t)}</span>${tm ? `<div><span class="fi-tag na" title="${esc(tm)}">DATED BEFORE ${esc(DEC[pos].slice(5).replace("-", "/"))}</span></div>` : ""}</td>${outCell(pos, r.h.name)}</tr>`; });
   return tbl(head, rows, "fi-click");
 }
 function cmpCards(pos, S) {
@@ -256,6 +257,7 @@ function testHTML(r, title, note) {
     ${tbl(["Method", "ρ", "80% interval", "Model minus this baseline (80% interval)"], [row("This model (current weights)", r.model, r.modelCI), row("Baseline: portal rating only", r.rating, r.ratingCI, r.dRating), row(`Baseline: ${r.baseLabel}`, r.base, r.baseCI, r.dBase)])}
     <p class="fi-sub">Positive ρ means the ranking ordered players roughly like their later production. Intervals from 300 bootstrap resamples.</p>`);
 }
+function jumpTag(h) { const lv = h.olv || "Other"; const fx = LVF[lv] ?? LVF.Other; return `<div class="fi-jump ${lv === "P4" ? "" : "up"}" title="Production from the last school is multiplied by ${fx.toFixed(2)} for the move to Ohio State (P4).">${esc(lv)} → P4 · ×${fx.toFixed(2)}</div>`; }
 const noRecent = (pos, h) => (pos === "qb" ? !(h.pre25?.att || h.pre25?.car) : !h.s2025);
 function realNote(pos, S) {
   const best = S.rows[0]; const real = S.rows.filter((r) => feas(pos, r.h).real && !isSignee(r.h.name));
@@ -268,15 +270,15 @@ function realNote(pos, S) {
   </div>`;
 }
 function funnelHTML(pos) {
-  const S = scored(pos); const list0 = F.realOnly[pos] ? S.rows.filter((r) => feas(pos, r.h).real) : S.rows; const top = list0.slice(0, 20);
+  const S = scored(pos); const list0 = F.realOnly[pos] ? S.rows.filter((r) => feas(pos, r.h).real) : S.rows; const top = list0;
   const totalM = market(pos).length;
-  const funnel = `<div class="fi-funnel" id="fi-funnel-${pos}"><div><b>${totalM}</b><span>${POS[pos].short} records in the 2026 CFBD portal feed</span></div><div><b>${S.rows.length}</b><span>screened: ${pos === "qb" ? "≥ 50 attempts in 2024–25" : "≥ 10 tackles in a 2024–25 season"}, plus anyone Ohio State signed or pursued</span></div><div><b>${top.length}</b><span>top of the ranking shown</span></div><div><b>${S.rows.filter((r) => feas(pos, r.h).real && !isSignee(r.h.name)).length}</b><span>${pos === "qb" ? "realistic for a backup role" : "with reported Ohio State contact"}</span></div></div>`;
+  const funnel = `<div class="fi-funnel" id="fi-funnel-${pos}"><div><b>${totalM}</b><span>${POS[pos].short} records in the 2026 CFBD portal feed</span></div><div><b>${S.rows.length}</b><span>screened: ${pos === "qb" ? "≥ 50 attempts in 2024–25" : "≥ 10 tackles in a 2024–25 season"}, plus anyone Ohio State signed or pursued</span></div><div><b>${S.rows.filter((r) => (r.h.olv || "Other") !== "P4").length}</b><span>moving up from G5 or FCS (production discounted)</span></div><div><b>${S.rows.filter((r) => feas(pos, r.h).real && !isSignee(r.h.name)).length}</b><span>${pos === "qb" ? "realistic for a backup role" : "with reported Ohio State contact"}</span></div></div>`;
   return funnel;
 }
 function liveBlock(pos) {
   const S = scored(pos);
   const list0 = F.realOnly[pos] ? S.rows.filter((r) => feas(pos, r.h).real) : S.rows;
-  const top = list0.slice(0, 20); const extra = list0.filter((r) => (isSignee(r.h.name) || (PURSUIT[pos] || {})[r.h.name]) && !top.includes(r));
+  const top = list0; const extra = [];
   if (!F.cmp[pos]) { const real = S.rows.filter((r) => feas(pos, r.h).real && !isSignee(r.h.name)); F.cmp[pos] = [...new Set([S.rows.find((r) => isSignee(r.h.name))?.h.name, S.rows[0]?.h.name, real[0]?.h.name].filter(Boolean))].slice(0, 3); }
   let acc = "";
   if (F.reveal) {
@@ -284,7 +286,7 @@ function liveBlock(pos) {
     acc = testHTML(compare(xs, pos === "qb" ? "2025 PPA per pass" : "2025 (sacks + hurries) per game", S.rows.length), "Prediction accuracy · 2026 partial season", `2026 outcome measure: ${OUTCOME[pos].label} (${OUTCOME[pos].min}), through Nov. 10, 2026. Only players who earned enough opportunity are scored, so this tests performance given opportunity, not who would play.`);
   }
   return `${realNote(pos, S)}
-    ${card(`Ranking at the decision date · ${F.realOnly[pos] ? "realistic only" : "all screened"}`, `<div class="fi-row"><button class="fi-chip ${F.realOnly[pos] ? "" : "on"}" data-fireal="${pos}:0">All screened</button><button class="fi-chip ${F.realOnly[pos] ? "on" : ""}" data-fireal="${pos}:1">Realistic only</button><span class="fi-sub">Tap a row to compare (up to three).</span></div>${rankTable(pos, S, [...top, ...extra])}<p class="fi-sub">DATED BEFORE: the player's CFBD portal record is dated before Ohio State's decision. CFBD does not say whether that date is portal entry or commitment, so it may mean he was already committed elsewhere. Score columns show the first three metrics; the comparison panel shows all of them.</p>`)}
+    ${card(`Ranking at the decision date · ${F.realOnly[pos] ? "realistic only" : "all screened"}`, `<div class="fi-row"><button class="fi-chip ${F.realOnly[pos] ? "" : "on"}" data-fireal="${pos}:0">All screened</button><button class="fi-chip ${F.realOnly[pos] ? "on" : ""}" data-fireal="${pos}:1">Realistic only</button><span class="fi-sub">Showing all ${top.length} ${F.realOnly[pos] ? "realistic" : "screened"} players. Tap a row to compare (up to three).</span></div><div class="fi-long">${rankTable(pos, S, [...top, ...extra])}</div><p class="fi-sub">LEVEL MOVE (under each school): production from a G5 school counts at ×${LVF.G5}, FCS at ×${LVF.FCS}, P4 at ×${LVF.P4} for the move to Ohio State. This is a fixed league discount, not a learned jump effect, and it does not separate strong and weak P4 teams. NO 2025 SEASON: production metrics count at ${Math.round(GAP_REL * 100)}% reliability, which pulls the score toward average and widens the 80% range. DATED BEFORE: the player's CFBD portal record is dated before Ohio State's decision. CFBD does not say whether that date is portal entry or commitment, so it may mean he was already committed elsewhere. Score columns show the first three metrics; the comparison panel shows all of them.</p>`)}
     ${card("Compare", cmpCards(pos, S))}
     ${acc}`;
 }
@@ -319,7 +321,7 @@ function pagePos() {
   const signed = S.rows.filter((r) => isSignee(r.h.name));
   return wrap(`<div class="fi-tabs" role="tablist">${tabs.map((t) => `<button role="tab" aria-selected="${t === p}" class="${t === p ? "on" : ""}" data-fipos="${t}">${POS[t].short}</button>`).join("")}</div>
     ${POS[p].caution ? `<p class="fi-warn">${esc(POS[p].caution)}</p>` : ""}
-    <div class="fi-split"><div>${card(`${esc(POS[p].label)} · metrics`, `<ul>${POS[p].metrics.map((m) => `<li><b>${esc(m.label)}</b> (default ${m.w}) · ${esc(m.what)}${m.ks ? ` · shrinkage k = ${m.ks}` : ""}</li>`).join("")}</ul><p class="fi-sub">Each module uses its own metrics. There is no universal player score. Production is per team game and weighted by league level (P4 ${LVF.P4}, G5 ${LVF.G5}, FCS ${LVF.FCS}) to adjust for opponent strength; reliability shrinkage adjusts for sample size; share-of-team metrics adjust for role.</p>`)}
+    <div class="fi-split"><div>${card(`${esc(POS[p].label)} · metrics`, `<ul>${POS[p].metrics.map((m) => `<li><b>${esc(m.label)}</b> (default ${m.w}) · ${esc(m.what)}${m.ks ? ` · shrinkage k = ${m.ks}` : ""}</li>`).join("")}</ul><p class="fi-sub">Each module uses its own metrics. There is no universal player score. Production is per team game and weighted by league level (P4 ${LVF.P4}, G5 ${LVF.G5}, FCS ${LVF.FCS}) to adjust for opponent strength; reliability shrinkage adjusts for sample size; share-of-team metrics adjust for role. A player with no 2025 season has his production metrics counted at ${Math.round(GAP_REL * 100)}% reliability, which pulls him toward average and widens his range.</p>`)}
       ${card("Not measurable from public data", `<ul>${POS[p].NA.map(([a, b]) => `<li>${NA} <b>${esc(a)}</b> · ${esc(b)}</li>`).join("")}</ul>`)}
       ${card("Ohio State signees in this module", signed.map((r) => `<p><b>${esc(r.h.name)}</b> · rank ${r.rank} of ${S.rows.length} (80% range ${r.lo}–${r.hi}) · data ${pct(r.completeness)}</p>`).join("") || "<p>None ranked.</p>")}</div>
       <div>${card(`Top 15 of ${S.rows.length} screened`, rankTable(p, S, [...S.rows.slice(0, 15), ...signed.filter((r) => r.rank > 15)]))}</div></div>`);

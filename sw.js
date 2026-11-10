@@ -1,5 +1,5 @@
 // Caches the app shell only. Player data and every /api/ response are never cached on the device.
-const V = "be-v11-shell-8";
+const V = "be-v11-shell-9";
 const SHELL = ["./", "./index.html", "./styles.css", "./manifest.webmanifest", "./icon.svg"];
 self.addEventListener("install", (e) => { e.waitUntil(caches.open(V).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting())); });
 self.addEventListener("activate", (e) => { e.waitUntil(caches.keys().then((ks) => Promise.all(ks.filter((k) => k !== V).map((k) => caches.delete(k)))).then(() => self.clients.claim())); });
