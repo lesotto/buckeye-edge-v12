@@ -14,6 +14,13 @@ export function pool(h, keys) {
   }
   return out;
 }
+// Missed-season rule: a player with older production but no 2025 season gets every metric's reliability
+// multiplied by GAP_REL. That pulls his score toward average and widens his rank range. 0.5 is a stated
+// assumption (one of two seasons missing), not a fitted value.
+export const GAP_REL = 0.5;
+export const missedSeason = (pos, h) => pos === "qb" ? !!((h.pre24?.att || h.pre24?.car) && !(h.pre25?.att || h.pre25?.car)) : !!(h.s2024 && !h.s2025);
+// Conference jump label: every destination here is Ohio State (P4), so the origin level sets the jump.
+export const jumpOf = (h) => { const l = lvOf(h); return { from: l === "G5" ? "G5/G6" : l, f: LVF[l] ?? LVF.Other }; };
 const lvOf = (h) => h.olv || h.s2025?.lv || h.s2024?.lv || "Other";
 const per = (p, k) => (p.games ? (p[k] || 0) / p.games : null);
 
@@ -116,23 +123,17 @@ function rng(seed) { let s = seed >>> 0; return () => { s = (s * 1664525 + 10139
 function gauss(r) { let u = 0, v = 0; while (!u) u = r(); while (!v) v = r(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); }
 
 // Score a market. rows: historical rows. w: {metricKey: weight}. Returns rows with score, z, contributions, rank, interval.
-// Missing the most recent season (2025): production from an older season is less certain to carry forward
-// (injury, role change, development). Production-based metrics get their reliability multiplied by GAP_REL,
-// which pulls the player toward average and widens his 80% rank range. Count and rating metrics
-// (experience, readiness, ratings, level; kShrink = 0) are facts, not rate estimates, so they are unaffected.
-export const GAP_REL = 0.5;
-export const missedRecent = (pos, h) => (pos === "qb" ? !(h.pre25?.att || h.pre25?.car) : !h.s2025 && !!h.s2024);
 export function score(pos, rows, w, draws = 200) {
   const cfg = POS[pos]; const M = cfg.metrics;
   const vals = rows.map((h) => M.map((m) => m.fn(h)));
   const stats = M.map((m, j) => { const xs = vals.map((v) => v[j].v).filter((x) => x !== null); const mu = xs.reduce((a, b) => a + b, 0) / (xs.length || 1); const sd = Math.sqrt(xs.reduce((a, b) => a + (b - mu) ** 2, 0) / (xs.length || 1)) || 1; return { mu, sd }; });
   const W = M.map((m) => Math.max(0, w[m.k] ?? m.w)); const Wsum = W.reduce((a, b) => a + b, 0) || 1;
   const out = rows.map((h, i) => {
-    const z = [], rel = [], miss = []; const gap = missedRecent(pos, h);
+    const z = [], rel = [], miss = []; const gap = missedSeason(pos, h);
     M.forEach((m, j) => {
       const { v, n } = vals[i][j];
       if (v === null) { z.push(0); rel.push(0); miss.push(m.label); return; }
-      const r = (m.ks ? n / (n + m.ks) : 1) * (gap && m.ks ? GAP_REL : 1); const raw = ((v - stats[j].mu) / stats[j].sd) * (m.dir || 1);
+      const r = (m.ks ? n / (n + m.ks) : 1) * (gap ? GAP_REL : 1); const raw = ((v - stats[j].mu) / stats[j].sd) * (m.dir || 1);
       z.push(Math.max(-3, Math.min(3, raw)) * r); rel.push(r);
     });
     const contrib = z.map((x, j) => (W[j] * x) / Wsum);
@@ -146,7 +147,7 @@ export function score(pos, rows, w, draws = 200) {
     const ord = sc.map((s, i) => [s, i]).sort((a, b) => b[0] - a[0]);
     ord.forEach(([, i], k) => ranks[i].push(k + 1));
   }
-  out.forEach((r, i) => { const a = ranks[i].sort((x, y) => x - y); r.lo = a[Math.floor(a.length * 0.1)]; r.hi = a[Math.floor(a.length * 0.9)]; r.completeness = (M.length - r.miss.length + (r.gap ? 0 : 1)) / (M.length + 1); });
+  out.forEach((r, i) => { const a = ranks[i].sort((x, y) => x - y); r.lo = a[Math.floor(a.length * 0.1)]; r.hi = a[Math.floor(a.length * 0.9)]; r.completeness = 1 - r.miss.length / M.length; });
   return { rows: out, stats, W, Wsum };
 }
 
